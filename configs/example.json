@@ -1,0 +1,27 @@
+{
+    "simulation_settings": {
+        "output_dir": "/home/go",
+        "sim_length": 4000, 
+        "usteps": 1663,
+        "solver_method": "RK45",
+        "rtol": 1e-10,
+        "atol": 1e-12
+    },
+    "system_parameters": {
+        "N": 2,
+        "n_max_transmon": 4,
+        "n_max_resonator": 4
+    },
+    "physical_constants": {
+        "eta": 0.1,
+        "phiq": 0.43,
+        "phia": "0.019 * 2",
+        "J": "2 * np.pi * 0.03333333333333333",
+        "nu": "2 * np.pi * 7.33333333",
+        "delta": "2 * np.pi * 0.16",
+        "de": -0.9388888888888889,
+        "wq": "2 * np.pi * 4.66666667",
+        "EJ": "2 * np.pi * 20",
+        "kappa": 0.0
+    }
+}
