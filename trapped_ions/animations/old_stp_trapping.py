@@ -41,8 +41,13 @@ N0 = 1
 KT = 1.0
 BETA = 0.01
 N_CYCLES = 26
-N_PULSE_FRAMES = 10
+N_PULSE_FRAMES = 24
 N_DISS_FRAMES = 4
+FRAME_TIME = 0.055
+DISPLAY_XY_GAIN = 120.0
+VIEW_AZIMUTH_DEG = 45.0
+VIEW_ELEVATION_DEG = 30.0
+SHOW_TRANSVERSE_ARROW = True
 
 
 def precompute_old_stp():
@@ -145,6 +150,36 @@ BLOCH_XYZ, FOCK_POPS, CYCLE_IDX, PHASE_LABEL, PHASE_FRAC = precompute_old_stp()
 print(f"Old STP precompute done. Frames: {len(CYCLE_IDX)}")
 
 
+def choose_projection_angles(bloch_xyz):
+    xy = np.array(bloch_xyz[:, :2], dtype=float)
+    xy -= np.mean(xy, axis=0, keepdims=True)
+    cov = xy.T @ xy
+    evals, evecs = np.linalg.eigh(cov)
+    dominant = evecs[:, np.argmax(evals)]
+
+    az = float(np.arctan2(-dominant[1], dominant[0]))
+    el = np.deg2rad(30)
+    return az, el
+
+
+def display_bloch_vector(vec3, xy_gain=DISPLAY_XY_GAIN):
+    bx, by, bz = [float(v) for v in vec3]
+    shown = np.array([xy_gain * bx, xy_gain * by, bz], dtype=float)
+    norm = np.linalg.norm(shown)
+    if norm > 1.0:
+        shown /= norm
+    return shown
+
+
+def transverse_component(vec3):
+    tx, ty = float(vec3[0]), float(vec3[1])
+    tvec = np.array([tx, ty, 0.0], dtype=float)
+    tnorm = np.linalg.norm(tvec)
+    if tnorm > 1.0:
+        tvec /= tnorm
+    return tvec
+
+
 class OldSTPTrappingScene(Scene):
     def construct(self):
         title = Text("Old STP protocol: repeated cooling cycles", font_size=34)
@@ -156,14 +191,18 @@ class OldSTPTrappingScene(Scene):
         bloch_center = np.array([-4.1, -0.4, 0.0])
         R = 1.5
 
-        az = np.deg2rad(-35)
-        el = np.deg2rad(22)
+        az = np.deg2rad(VIEW_AZIMUTH_DEG)
+        el = np.deg2rad(VIEW_ELEVATION_DEG)
 
         def proj(vec3, scale=1.0):
             x, y, z = vec3
             x_cam = np.cos(az) * x - np.sin(az) * y
             y_cam = np.sin(el) * (np.sin(az) * x + np.cos(az) * y) + np.cos(el) * z
             return bloch_center + scale * (x_cam * RIGHT + y_cam * UP)
+
+        def depth_component(vec3):
+            x, y, _ = vec3
+            return float(np.sin(az) * x + np.cos(az) * y)
 
         sphere = Circle(radius=R, color=BLUE_C, stroke_opacity=0.65, stroke_width=1.5).move_to(bloch_center)
         equator = Ellipse(width=2 * R, height=0.60 * R, color=BLUE_D, stroke_opacity=0.35, stroke_width=1).rotate(-12 * DEGREES).move_to(bloch_center)
@@ -203,7 +242,14 @@ class OldSTPTrappingScene(Scene):
         bloch_title = Text("Spin state", font_size=20).move_to(bloch_center + (R + 0.5) * UP)
 
         b0x, b0y, b0z = BLOCH_XYZ[0]
-        tip0 = proj([b0x, b0y, b0z], R)
+        disp0 = display_bloch_vector([b0x, b0y, b0z])
+        tip0 = proj(disp0, R)
+        trans0 = transverse_component(disp0)
+        tip0_trans = proj(trans0, R)
+        d0 = depth_component(disp0)
+        depth_alpha0 = np.clip((d0 + 1.0) / 2.0, 0.0, 1.0)
+        tip_opacity0 = 0.45 + 0.55 * depth_alpha0
+        tip_radius0 = 0.03 + 0.025 * depth_alpha0
         spin_arrow = Arrow(
             bloch_center,
             tip0,
@@ -212,7 +258,18 @@ class OldSTPTrappingScene(Scene):
             stroke_width=4,
             max_tip_length_to_length_ratio=0.15,
         )
-        spin_tip = Dot(tip0, color=YELLOW, radius=0.04)
+        spin_arrow.set_stroke(opacity=tip_opacity0)
+        spin_tip = Dot(tip0, color=YELLOW, radius=tip_radius0, fill_opacity=tip_opacity0)
+        spin_xy_arrow = Arrow(
+            bloch_center,
+            tip0_trans,
+            buff=0,
+            color=ORANGE,
+            stroke_width=3,
+            max_tip_length_to_length_ratio=0.12,
+        )
+        spin_xy_arrow.set_stroke(opacity=0.75)
+        depth_link = DashedLine(tip0_trans, tip0, color=GRAY_C, stroke_width=1.6, dashed_ratio=0.55)
         spin_trace = TracedPath(spin_tip.get_center, stroke_color=YELLOW_A, stroke_width=2, stroke_opacity=0.55)
 
         left_group = VGroup(sphere, equator, meridian, x_axis, y_axis, z_axis, x_lbl, y_lbl, z_lbl, up_lbl, dn_lbl, bloch_title)
@@ -264,6 +321,8 @@ class OldSTPTrappingScene(Scene):
             FadeIn(left_group),
             Create(spin_arrow),
             FadeIn(spin_tip),
+            Create(spin_xy_arrow) if SHOW_TRANSVERSE_ARROW else FadeIn(VGroup()),
+            Create(depth_link) if SHOW_TRANSVERSE_ARROW else FadeIn(VGroup()),
             FadeIn(right_top),
             FadeIn(cycle_text),
             run_time=1.6,
@@ -277,7 +336,14 @@ class OldSTPTrappingScene(Scene):
             idx = int(np.clip(progress.get_value(), 0, n_frames))
 
             bx, by, bz = BLOCH_XYZ[idx]
-            tip = proj([bx, by, bz], R)
+            current_vec = display_bloch_vector([bx, by, bz])
+            tip = proj(current_vec, R)
+            trans_vec = transverse_component(current_vec)
+            tip_trans = proj(trans_vec, R)
+            d = depth_component(current_vec)
+            depth_alpha = np.clip((d + 1.0) / 2.0, 0.0, 1.0)
+            tip_opacity = 0.45 + 0.55 * depth_alpha
+            tip_radius = 0.03 + 0.025 * depth_alpha
             new_arrow = Arrow(
                 bloch_center,
                 tip,
@@ -286,8 +352,21 @@ class OldSTPTrappingScene(Scene):
                 stroke_width=4,
                 max_tip_length_to_length_ratio=0.15,
             )
+            new_arrow.set_stroke(opacity=tip_opacity)
             spin_arrow.become(new_arrow)
-            spin_tip.move_to(tip)
+            spin_tip.become(Dot(tip, color=YELLOW, radius=tip_radius, fill_opacity=tip_opacity))
+            if SHOW_TRANSVERSE_ARROW:
+                new_xy_arrow = Arrow(
+                    bloch_center,
+                    tip_trans,
+                    buff=0,
+                    color=ORANGE,
+                    stroke_width=3,
+                    max_tip_length_to_length_ratio=0.12,
+                )
+                new_xy_arrow.set_stroke(opacity=0.75)
+                spin_xy_arrow.become(new_xy_arrow)
+                depth_link.become(DashedLine(tip_trans, tip, color=GRAY_C, stroke_width=1.6, dashed_ratio=0.55))
 
             for n in range(n_plot):
                 h = max(float(FOCK_POPS[idx, n]) / p_scale_max * max_bar_h, 0.008)
@@ -315,7 +394,7 @@ class OldSTPTrappingScene(Scene):
 
         spin_arrow.add_updater(updater)
 
-        self.play(progress.animate.set_value(n_frames), run_time=34, rate_func=linear)
+        self.play(progress.animate.set_value(n_frames), run_time=max(34, n_frames * FRAME_TIME), rate_func=linear)
         spin_arrow.remove_updater(updater)
 
         end_note = Text("Repeated STP cycles cool and trap population in low n", font_size=24, color=YELLOW_B)
