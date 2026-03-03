@@ -60,7 +60,8 @@ Omega_y = 100 * nu
 n0 = 1
 RF_strength = 4.0
 gamma = 1000.0
-kT = 1.0
+beta = 0.1    # Inverse temperature
+kT = 1.0      # Boltzmann constant times temperature
 
 # Choose beta via a target mean phonon number to keep dynamics visible.
 # This still uses your exact thermal-state formula: exp(-beta*nu*a^\dag a/kT).
@@ -158,7 +159,6 @@ def precompute_single_cycle():
     prop_diss_step = (liouvillian(H_diss, c_ops) * (tg / N_DISS_FRAMES)).expm()
 
     # Initial state: spin ground (|↓>) tensor motional thermal
-    beta = float(np.log(1.0 + 1.0 / N_THERMAL) / nu)
     thermal_state = (-beta * nu * a_dag * a / kT).expm()
     thermal_state = thermal_state / thermal_state.tr()
     ground_state = basis(2, 1)
@@ -277,7 +277,7 @@ class SingleSequenceBlochScene(Scene):
         z_lbl = MathTex(r"s_z", font_size=42, color=GREEN_B).next_to(z_axis.get_end(), RIGHT, buff=0.22)
 
         bloch_title = MathTex(
-            r"\text{Reduced\ spin\ state}\; \rho_{\mathrm{spin}}=\operatorname{Tr_{mot}}\{\rho\}",
+            r"\text{Reduced\ spin\ state}\; \rho_{\mathrm{spin}}= Tr_{mot} \{\rho\}",
             font_size=28,
         ).move_to(bloch_center + (R + 1.35) * UP)
 
