@@ -20,6 +20,7 @@ Run:  python3 make_paper_figures.py
 """
 import os
 import pickle
+import tempfile
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -102,7 +103,7 @@ def reset_super(N_, eta):
     tg = 4/gamma) with recoil, as in Eq. (9) of the manuscript."""
     key = (N_, round(float(eta), 6))
     if key not in _RESET_CACHE:
-        fname = os.path.join("/tmp", f"reset_{N_}_{key[1]}.npy")
+        fname = os.path.join(tempfile.gettempdir(), f"reset_{N_}_{key[1]}.npy")
         if os.path.exists(fname):
             _RESET_CACHE[key] = np.load(fname)
         else:
