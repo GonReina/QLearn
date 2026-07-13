@@ -26,7 +26,7 @@ plt.rcParams.update({
 })
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FIGDIR = os.path.join(HERE, "figures")
+FIGDIR = os.path.join(HERE)
 CACHEFILE = os.path.join(HERE, "figs02_cache.pkl")
 try:
     with open(CACHEFILE, "rb") as fh:
