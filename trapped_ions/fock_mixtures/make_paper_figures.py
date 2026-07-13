@@ -3,8 +3,10 @@
 Publication figures for the section
 "Blue-sideband refocusing with Bloch-Siegert detuning".
 
-Reproduces the computations of Improved_pulse_sequence.ipynb and
-Pulse_shaping.ipynb and saves three PDF figures into figures/:
+Reproduces the analyses of Improved_pulse_sequence.ipynb and
+Pulse_shaping.ipynb, with the idealized instantaneous spin reset replaced
+by the full dissipative reset with photon recoil of the main text
+(gamma = 1000), and saves three PDF figures into figures/:
 
     figure_5.pdf : refocusing + Bloch-Siegert detuning on the full sequence
                    (a) trace distance vs eta, (b) (f, delta) calibration map
@@ -24,7 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from qutip import (destroy, sigmaz, sigmax, sigmap, sigmam, qeye, tensor,
-                   basis, fock_dm, displace, expect, Qobj)
+                   basis, fock_dm, displace, expect, Qobj, liouvillian)
 
 plt.rcParams.update({
     "text.usetex": False, "font.size": 11, "axes.labelsize": 11,
@@ -37,7 +39,7 @@ FIGDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
 os.makedirs(FIGDIR, exist_ok=True)
 
 # ---------------- simple checkpoint cache (results are expensive; allow resuming)
-CACHEFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figgen_cache.pkl")
+CACHEFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figgen_diss_cache.pkl")
 try:
     with open(CACHEFILE, "rb") as fh:
         _CACHE = pickle.load(fh)
@@ -55,7 +57,7 @@ def cached(key, fn):
         os.replace(tmp, CACHEFILE)
     return _CACHE[key]
 
-# ---------------- shared setup (idealized cycle: perfect instantaneous spin reset)
+# ---------------- shared setup (full dissipative spin reset with photon recoil)
 nu, n0, Omega, N, nbar, R = 1.0, 1, 1.0, 16, 1.0, 40
 
 a = destroy(N); ad = a.dag()
@@ -90,15 +92,50 @@ def Dop(eta):
     return tensor(qeye(2), displace(N, 1j * eta))
 
 
-def _iterate(U, p_init=None, R_=R, N_=N, projs_=None, g_=None):
-    projs_ = projs if projs_ is None else projs_
-    g_ = gket if g_ is None else g_
-    rho_m = Qobj(np.diag(p0 if p_init is None else p_init), dims=[[N_], [N_]])
+# --- dissipative spin reset with photon recoil (main-text model, gamma = 1000)
+gamma_reset = 1000.0
+_RESET_CACHE = {}
+
+
+def reset_super(N_, eta):
+    """Dense column-stacked superoperator of the dissipative reset (duration
+    tg = 4/gamma) with recoil, as in Eq. (9) of the manuscript."""
+    key = (N_, round(float(eta), 6))
+    if key not in _RESET_CACHE:
+        fname = os.path.join("/tmp", f"reset_{N_}_{key[1]}.npy")
+        if os.path.exists(fname):
+            _RESET_CACHE[key] = np.load(fname)
+        else:
+            aa = destroy(N_); xop = aa + aa.dag()
+            smf = tensor(sigmam(), qeye(N_))
+            numf = tensor(qeye(2), aa.dag() * aa)
+            cosmax = 100
+            cosal = np.arange(-cosmax, cosmax + 1) / cosmax
+            Wd = 3 * (cosal ** 2 + 1) / 4 / (2 * cosmax)
+            Wd = Wd / np.sum(Wd)
+            G = gamma_reset / 2
+            tg = 2 / G
+            c_ops = [np.sqrt(G * Wd[i]) * (smf * tensor(qeye(2), (1j * c * eta * xop).expm()))
+                     for i, c in enumerate(cosal)]
+            c_ops.append(np.sqrt(gamma_reset) * smf)
+            Ld = (liouvillian(nu * numf, c_ops) * tg).expm().full()
+            _RESET_CACHE[key] = np.ascontiguousarray(Ld)
+            np.save(fname, _RESET_CACHE[key])
+    return _RESET_CACHE[key]
+
+
+def _iterate(U, eta, p_init=None, R_=R, N_=N):
+    """Cycle: coherent pulse-sequence unitary U, then dissipative reset."""
+    Ud = U.full()
+    Ld = reset_super(N_, eta)
+    dim = 2 * N_
+    rho = np.zeros((dim, dim), dtype=complex)
+    rho[N_:, N_:] = np.diag(p0 if p_init is None else p_init)  # |g><g| x rho_m
     for _ in range(R_):
-        rho = tensor(g_ * g_.dag(), rho_m)
-        rho = U * rho * U.dag()
-        rho_m = rho.ptrace(1)
-    return np.real(np.array(expect(projs_, rho_m)))
+        rho = Ud @ rho @ Ud.conj().T
+        rho = (Ld @ rho.flatten(order="F")).reshape((dim, dim), order="F")
+    d = np.real(np.diag(rho))
+    return d[:N_] + d[N_:]
 
 
 def prep_square(eta, tau_factor=1.0, delta_x=0.0, Omega_y=100.0, RF=1.0):
@@ -109,7 +146,7 @@ def prep_square(eta, tau_factor=1.0, delta_x=0.0, Omega_y=100.0, RF=1.0):
     U_y = (-1j * H_y * ty).expm(); U_y_u = (1j * H_y * ty).expm()
     H_x = 0.5 * delta_x * sx + nu * num + 0.5 * Omega * (sp * D + sm * D.dag())
     U_x = (-1j * H_x * tau).expm()
-    return _iterate(U_rf_u * U_y_u * U_x * U_y * U_rf)
+    return _iterate(U_rf_u * U_y_u * U_x * U_y * U_rf, eta)
 
 
 # =====================================================================
@@ -210,12 +247,7 @@ def figure_metrology(fname="figure_6.pdf"):
         H_x = 0.5 * delta_x * sxm + nu * numm + 0.5 * Omega * (spm * D + smm * D.dag())
         U_x = (-1j * H_x * tau).expm()
         U = U_rf_u * U_y_u * U_x * U_y * U_rf
-        rho_m = Qobj(np.diag(p0_met), dims=[[N_met], [N_met]])
-        for _ in range(R_met):
-            rho = tensor(g_ * g_.dag(), rho_m)
-            rho = U * rho * U.dag()
-            rho_m = rho.ptrace(1)
-        return np.real(np.array(expect(projs_m, rho_m)))
+        return _iterate(U, eta, p_init=p0_met, R_=R_met, N_=N_met)
 
     alphas = np.linspace(1e-3, 1.2, 241)
     Dmats = [displace(N_met, al).full() for al in alphas]
@@ -309,7 +341,7 @@ def prep_shaped(eta, shape="cos", kappa=1.0, M=50, Omega_y=100.0, RF=1.0):
     U_rf = (-1j * 0.5 * RF * (A + Ad) * (eta / RF)).expm(); U_rf_u = U_rf.dag()
     H_y = 0.5 * Omega_y * (-1j * sp * D + 1j * sm * D.dag()); ty = np.pi / (2 * Omega_y)
     U_y = (-1j * H_y * ty).expm(); U_y_u = (1j * H_y * ty).expm()
-    return _iterate(U_rf_u * U_y_u * U_x * U_y * U_rf)
+    return _iterate(U_rf_u * U_y_u * U_x * U_y * U_rf, eta)
 
 
 def detuning_profile(name, M, amp):
@@ -335,7 +367,7 @@ def prep_chirp(eta, profile="const", amp=0.0, f=1.0, M=40, Omega_y=100.0, RF=1.0
     U_rf = (-1j * 0.5 * RF * (A + Ad) * (eta / RF)).expm(); U_rf_u = U_rf.dag()
     H_y = 0.5 * Omega_y * (-1j * sp * D + 1j * sm * D.dag()); ty = np.pi / (2 * Omega_y)
     U_y = (-1j * H_y * ty).expm(); U_y_u = (1j * H_y * ty).expm()
-    return _iterate(U_rf_u * U_y_u * U_x * U_y * U_rf)
+    return _iterate(U_rf_u * U_y_u * U_x * U_y * U_rf, eta)
 
 
 def figure_pulse_shaping(fname="figure_7.pdf"):

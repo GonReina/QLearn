@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Comparison of the full pulse sequence WITH and WITHOUT the RF kick
-(figure-5 setup: ideal instantaneous reset, N = 16, nbar = 1, 40 cycles).
+(figure-5 setup with the full dissipative reset with photon recoil,
+N = 16, nbar = 1, 40 cycles).
 'refined' means (f, delta) re-optimized per eta for EACH variant separately.
 
 Saves figures/figure_rf_comparison.pdf.  Cached in rfcomp_cache.pkl.
@@ -15,6 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from qutip import (destroy, sigmax, sigmap, sigmam, qeye, tensor, basis,
                    fock_dm, displace, expect, Qobj)
+import make_paper_figures as mpf
 
 plt.rcParams.update({
     "text.usetex": False, "font.size": 11, "axes.labelsize": 11,
@@ -23,7 +25,7 @@ plt.rcParams.update({
 })
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CACHEFILE = os.path.join(HERE, "rfcomp_cache.pkl")
+CACHEFILE = os.path.join(HERE, "rfcomp_diss_cache.pkl")
 try:
     with open(CACHEFILE, "rb") as fh:
         _CACHE = pickle.load(fh)
@@ -71,12 +73,7 @@ def prep(eta, f=1.0, de=0.0, rf=True, Omega_y=100.0, RF=1.0):
         U = U_rf.dag() * U_y_u * U_x * U_y * U_rf
     else:
         U = U_y_u * U_x * U_y
-    rho_m = Qobj(np.diag(p0), dims=[[N], [N]])
-    for _ in range(R):
-        rho = tensor(gket * gket.dag(), rho_m)
-        rho = U * rho * U.dag()
-        rho_m = rho.ptrace(1)
-    return np.real(np.array(expect(projs, rho_m)))
+    return mpf._iterate(U, eta, p_init=p0, R_=R, N_=N)
 
 
 def refine(eta, rf):
